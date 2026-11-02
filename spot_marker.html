@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Parking Spot Marker</title>
+<style>
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  p { color: #94a3b8; font-size: 13px; max-width: 700px; }
+  #controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin: 12px 0;
+    flex-wrap: wrap;
+  }
+  button, input[type=file] {
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { background: #334155; }
+  button.primary { background: #16a34a; border-color: #16a34a; }
+  button.primary:hover { background: #15803d; }
+  #canvasWrap {
+    border: 1px solid #334155;
+    display: inline-block;
+    max-width: 100%;
+    overflow: auto;
+  }
+  canvas { display: block; cursor: crosshair; max-width: 100%; }
+  #status { font-size: 13px; color: #4ade80; margin: 8px 0; min-height: 18px; }
+  #output {
+    margin-top: 16px;
+    background: #1e293b;
+    padding: 14px;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .spot-tag {
+    display: inline-block;
+    background: #334155;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>🅿️ Parking Spot Marker</h1>
+<p>
+  Upload your lot photo, then click 4 corners per spot (in order, roughly
+  a rectangle). After 4 clicks, that spot is saved and a new one starts
+  automatically. Coordinates are read directly from the full-resolution
+  image, so this works correctly no matter how the image is displayed
+  on your screen.
+</p>
+
+<div id="controls">
+  <input type="file" id="fileInput" accept="image/*">
+  <button id="undoBtn">Undo last point</button>
+  <button id="newSpotBtn">Finish spot early / start new spot</button>
+  <button id="resetBtn">Reset all</button>
+  <button id="copyBtn" class="primary">Copy Python dict</button>
+</div>
+
+<div id="status">Upload a photo to begin.</div>
+<div id="canvasWrap"><canvas id="canvas"></canvas></div>
+
+<div id="output"># Click corners above — this box updates live with your SPOTS dict</div>
+
+<script>
+const fileInput = document.getElementById('fileInput');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const outputEl = document.getElementById('output');
+
+let img = new Image();
+let imgLoaded = false;
+let spots = {}; // { spot1: [[x,y],[x,y],[x,y],[x,y]], ... }
+let currentPoints = [];
+let spotCounter = 1;
+
+const colors = ['#22c55e', '#eab308', '#3b82f6', '#ec4899', '#f97316', '#a855f7', '#14b8a6', '#f43f5e'];
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      imgLoaded = true;
+      spots = {};
+      currentPoints = [];
+      spotCounter = 1;
+      draw();
+      statusEl.textContent = `Loaded image (${img.width}x${img.height}). Click 4 corners for spot1.`;
+      updateOutput();
+    };
+    img.src = evt.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+canvas.addEventListener('click', (e) => {
+  if (!imgLoaded) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const x = Math.round((e.clientX - rect.left) * scaleX);
+  const y = Math.round((e.clientY - rect.top) * scaleY);
+
+  currentPoints.push([x, y]);
+  draw();
+
+  if (currentPoints.length === 4) {
+    const spotId = `spot${spotCounter}`;
+    spots[spotId] = currentPoints;
+    currentPoints = [];
+    spotCounter++;
+    statusEl.textContent = `Saved spot${spotCounter - 1}. Click 4 corners for spot${spotCounter}.`;
+    updateOutput();
+    draw();
+  } else {
+    statusEl.textContent = `Point ${currentPoints.length}/4 for spot${spotCounter}.`;
+  }
+});
+
+document.getElementById('undoBtn').addEventListener('click', () => {
+  if (currentPoints.length > 0) {
+    currentPoints.pop();
+  } else {
+    const lastId = `spot${spotCounter - 1}`;
+    if (spots[lastId]) {
+      delete spots[lastId];
+      spotCounter--;
+    }
+  }
+  draw();
+  updateOutput();
+  statusEl.textContent = `Point ${currentPoints.length}/4 for spot${spotCounter}.`;
+});
+
+document.getElementById('newSpotBtn').addEventListener('click', () => {
+  currentPoints = [];
+  statusEl.textContent = `Click 4 corners for spot${spotCounter}.`;
+  draw();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  spots = {};
+  currentPoints = [];
+  spotCounter = 1;
+  draw();
+  updateOutput();
+  statusEl.textContent = imgLoaded ? `Click 4 corners for spot1.` : 'Upload a photo to begin.';
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText(outputEl.textContent).then(() => {
+    statusEl.textContent = 'Copied to clipboard! Paste into detect_test.py';
+  });
+});
+
+function draw() {
+  if (!imgLoaded) return;
+  ctx.drawImage(img, 0, 0);
+
+  // draw saved spots
+  const ids = Object.keys(spots);
+  ids.forEach((id, i) => {
+    const pts = spots[id];
+    const color = colors[i % colors.length];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, canvas.width / 500);
+    ctx.beginPath();
+    pts.forEach((p, idx) => idx === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]));
+    ctx.closePath();
+    ctx.stroke();
+
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    ctx.fillStyle = color;
+    ctx.font = `${Math.max(16, canvas.width / 100)}px sans-serif`;
+    ctx.fillText(id, cx - 20, cy);
+  });
+
+  // draw in-progress points
+  ctx.fillStyle = '#ffffff';
+  currentPoints.forEach((p, idx) => {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], Math.max(4, canvas.width / 300), 0, Math.PI * 2);
+    ctx.fill();
+    if (idx > 0) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(2, canvas.width / 500);
+      ctx.beginPath();
+      ctx.moveTo(currentPoints[idx - 1][0], currentPoints[idx - 1][1]);
+      ctx.lineTo(p[0], p[1]);
+      ctx.stroke();
+    }
+  });
+}
+
+function updateOutput() {
+  const lines = ['SPOTS = {'];
+  for (const [id, pts] of Object.entries(spots)) {
+    const ptsStr = pts.map(p => `(${p[0]}, ${p[1]})`).join(', ');
+    lines.push(`    "${id}": [${ptsStr}],`);
+  }
+  lines.push('}');
+  outputEl.textContent = lines.join('\n');
+}
+</script>
+
+</body>
+</html>

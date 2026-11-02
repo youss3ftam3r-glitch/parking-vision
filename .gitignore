@@ -1,0 +1,13 @@
+.DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+*.pt
+calibration_frame*.jpg
+runs/
+*.mp4
+*.mov
